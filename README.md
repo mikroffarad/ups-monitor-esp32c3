@@ -10,6 +10,54 @@ Firmware for monitoring VIA Energy Mini UPS via ESP32-C3 Super Mini.
 - [PlatformIO IDE](https://platformio.org/install/ide?install=vscode) (VS Code extension)
 - USB cable for connecting ESP32-C3 (data cable, not charge-only)
 
+## Installation
+
+### Option 1: Flash Pre-built Binary (Recommended for Users)
+
+Download the latest release from [Releases](https://github.com/mikroffarad/ups-monitor-esp32c3/releases/).
+
+**Release files:**
+| File | Description |
+|------|-------------|
+| `firmware.bin` | Main firmware (required) |
+| `bootloader.bin` | ESP32-C3 bootloader (required) |
+| `partitions.bin` | Partition table (required) |
+| `firmware.elf` | Debug symbols (optional) |
+
+#### Using esptool.py
+
+```bash
+# Install esptool if not already installed
+pip install esptool
+
+# Flash all required files (replace COM3 with your port)
+esptool.py --chip esp32c3 --port COM3 --baud 460800 \
+    --before default_reset --after hard_reset \
+    write_flash -z --flash_mode dio --flash_freq 80m --flash_size 4MB \
+    0x0 bootloader.bin \
+    0x8000 partitions.bin \
+    0x10000 firmware.bin
+```
+
+#### Using Flash Download Tool (Windows GUI)
+
+1. Download [Flash Download Tool](https://www.espressif.com/en/support/download/other-tools)
+2. Select **ESP32-C3** and **Develop** mode
+3. Configure flash files:
+
+   | File | Address |
+   |------|---------|
+   | bootloader.bin | 0x0 |
+   | partitions.bin | 0x8000 |
+   | firmware.bin | 0x10000 |
+
+4. Set SPI Speed: **80MHz**, SPI Mode: **DIO**
+5. Select COM port and click **START**
+
+### Option 2: Build from Source (For Developers)
+
+See [Quick Start with PlatformIO](#quick-start-with-platformio) section below.
+
 ## Quick Start with PlatformIO
 
 ### 1. Clone and Open Project
