@@ -1,234 +1,138 @@
-# UPS Monitor for ESP32-C3 Super Mini
+# UPS Monitor — ESP32-C3 Super Mini
 
-Firmware for monitoring VIA Energy Mini UPS via ESP32-C3 Super Mini.
+Web-based status monitor for DC UPS.  
+Reads battery level LEDs and AC/charging state via GPIO, and exposes a live dashboard over Wi-Fi.
 
-> **Note:** This is a PlatformIO project. For building and flashing, it is recommended to use VS Code with the PlatformIO IDE extension.
+---
 
-## Requirements
+## Hardware
 
-- [VS Code](https://code.visualstudio.com/)
-- [PlatformIO IDE](https://platformio.org/install/ide?install=vscode) (VS Code extension)
-- USB cable for connecting ESP32-C3 (data cable, not charge-only)
+**Board:** ESP32-C3 Super Mini  
+**UPS:** VIA Energy Mini
 
-## Installation
+---
 
-### Option 1: Flash Pre-built Binary (Recommended for Users)
+## Pin Mapping
 
-Download the latest release from [Releases](https://github.com/mikroffarad/ups-monitor-esp32c3/releases/).
+| GPIO | UPS Signal | Description |
+|------|-----------|-------------|
+| 21   | R         | AC power connected / charging active |
+| 0    | 100%      | Battery ≥ 100% LED |
+| 1    | 75%       | Battery ≥ 75% LED |
+| 3    | 50%       | Battery ≥ 50% LED |
+| 4    | 25%       | Battery ≥ 25% LED |
 
-**Release files:**
-| File | Description |
-|------|-------------|
-| `firmware.bin` | Main firmware (required) |
-| `bootloader.bin` | ESP32-C3 bootloader (required) |
-| `partitions.bin` | Partition table (required) |
-| `firmware.elf` | Debug symbols (optional) |
+---
 
-#### Using esptool.py
+## Inverted Signal Logic
 
-```bash
-# Install esptool if not already installed
-pip install esptool
+The UPS LED outputs use **inverted logic**:
 
-# Flash all required files (replace COM3 with your port)
-esptool.py --chip esp32c3 --port COM3 --baud 460800 \
-    --before default_reset --after hard_reset \
-    write_flash -z --flash_mode dio --flash_freq 80m --flash_size 4MB \
-    0x0 bootloader.bin \
-    0x8000 partitions.bin \
-    0x10000 firmware.bin
+| Physical pin level | Meaning |
+|--------------------|---------|
+| `HIGH` | Indicator is **OFF** (level not reached / no AC) |
+| `LOW`  | Indicator is **ON** (level active / AC present) |
+
+In the code this is handled by the `inverted` field inside each `PinDef` struct:
+
+```cpp
+const PinDef PINS[] = {
+  { PIN_R,   true, "AC / Charging" },  // true = inverted
+  { PIN_100, true, "100%"          },
+  ...
+};
 ```
 
-#### Using Flash Download Tool (Windows GUI)
+The helper `isActive()` transparently flips the reading when `inverted = true`, so the rest of the code always works with logical (not physical) levels. The web UI shows **green = active**, **red = inactive** — already accounting for the inversion.
 
-1. Download [Flash Download Tool](https://www.espressif.com/en/support/download/other-tools)
-2. Select **ESP32-C3** and **Develop** mode
-3. Configure flash files:
+To add a non-inverted pin in the future, simply set its `inverted` field to `false`.
 
-   | File | Address |
-   |------|---------|
-   | bootloader.bin | 0x0 |
-   | partitions.bin | 0x8000 |
-   | firmware.bin | 0x10000 |
+---
 
-4. Set SPI Speed: **80MHz**, SPI Mode: **DIO**
-5. Select COM port and click **START**
+## Web Interface
 
-### Option 2: Build from Source (For Developers)
+| URL | Description |
+|-----|-------------|
+| `http://<IP>/` | Live dashboard — battery level, AC status, GPIO table |
+| `http://<IP>/update` | OTA firmware update page |
+| `http://<IP>/api/status` | JSON API — battery %, pin states, uptime, version |
 
-See [Quick Start with PlatformIO](#quick-start-with-platformio) section below.
+The dashboard auto-refreshes every **3 seconds** via `fetch`.
 
-## Quick Start with PlatformIO
+---
 
-### 1. Clone and Open Project
+## Configuration
 
-```bash
-git clone <repository-url>
-cd ups-monitor-esp32c3
+Open `main.cpp` and edit the top section:
+
+```cpp
+const char* SSID             = "YOUR_WIFI_SSID";
+const char* PASSWORD         = "YOUR_WIFI_PASSWORD";
+const char* FIRMWARE_VERSION = "1.1.0";   // bump this on every release
 ```
 
-Open the project folder in VS Code.
+---
 
-### 2. Build Project
+## First Flash (USB)
 
-**Method 1: Via VS Code**
-- Click the PlatformIO icon on the sidebar (ant/alien icon)
-- Select `esp32c3-supermini` → `Build`
+1. Make sure `platformio.ini` does **not** have `upload_protocol` set.
+2. Connect the board via USB.
+3. In PlatformIO: **Build** → **Upload**.
+4. Open Serial Monitor at **115200 baud** — the IP address will be printed on boot.
 
-**Method 2: Via Terminal**
-```bash
-pio run
+---
+
+## OTA Firmware Update (Web)
+
+After the first USB flash, all subsequent updates can be done wirelessly through the browser.
+
+### Step 1 — Build the binary
+
+In PlatformIO press **Build** (or `Ctrl+Alt+B`).  
+The output file will be located at:
+
+```
+.pio/build/esp32-c3-devkitm-1/firmware.bin
 ```
 
-### 3. Upload (Flash)
+### Step 2 — Open the update page
 
-1. Connect ESP32-C3 via USB
-2. Identify COM port (Windows: Device Manager, Linux/Mac: `ls /dev/tty*`)
+Navigate to `http://<IP>/update` in your browser.  
+The current firmware version is displayed at the top of the page.
 
-**Method 1: Via VS Code**
-- PlatformIO → `esp32c3-supermini` → `Upload`
+### Step 3 — Upload
 
-**Method 2: Via Terminal**
-```bash
-pio run --target upload
+Drag and drop `firmware.bin` onto the upload area, or click to browse for the file.  
+Press **Flash firmware**.
+
+A progress bar shows the upload percentage.  
+Once complete, the ESP32 reboots automatically and the browser redirects back to the dashboard after 8 seconds.
+
+> **Note:** If the browser shows a connection error instead of the success message, the flash still likely succeeded — the ESP32 reboots mid-transfer which closes the HTTP connection. Wait a few seconds and refresh the main page to verify the new version number.
+
+### Step 4 — Verify
+
+Check the subtitle on the dashboard — it should show the new version:
+
+```
+VIA Energy Mini — ESP32-C3 · v1.2.0
 ```
 
-### 4. Serial Monitor
+---
 
-**Method 1: Via VS Code**
-- PlatformIO → `esp32c3-supermini` → `Monitor`
+## API Response Example
 
-**Method 2: Via Terminal**
-```bash
-pio device monitor
+```json
+{
+  "version": "1.1.0",
+  "battery_pct": 75,
+  "uptime_s": 3842,
+  "pins": [
+    { "pin": 21, "label": "AC / Charging", "raw": 0, "inverted": true, "active": true  },
+    { "pin": 0,  "label": "100%",          "raw": 1, "inverted": true, "active": false },
+    { "pin": 1,  "label": "75%",           "raw": 0, "inverted": true, "active": true  },
+    { "pin": 3,  "label": "50%",           "raw": 0, "inverted": true, "active": true  },
+    { "pin": 4,  "label": "25%",           "raw": 0, "inverted": true, "active": true  }
+  ]
+}
 ```
-
-### 5. Upload + Monitor (Single Command)
-
-```bash
-pio run --target upload --target monitor
-```
-
-Or via VS Code: PlatformIO → `esp32c3-supermini` → `Upload and Monitor`
-
-## Serial Monitor Settings
-
-- Baud rate: **115200**
-- Line ending: Any or Both NL & CR
-
-## GPIO Configuration
-```
-GPIO0 → UPS LED 25%
-GPIO1 → UPS LED 50%
-GPIO2 → (not used - internal pull-up)
-GPIO3 → UPS LED 100%
-GPIO4 → UPS PWR Mode (AC/Battery)
-GPIO5 → UPS LED 75% (backup/alternative)
-
-GPIO8 → 3.3V OUTPUT (for testing)
-```
-
-## Testing Without UPS
-
-Connect dupont male-male jumpers:
-- GPIO8 (3.3V source) → GPIO0, GPIO1, GPIO3, GPIO4, or GPIO5
-- Observe changes in Serial Monitor
-
-## Example Output
-```
-UPS Monitor - GPIO Test Started
-GPIO8 = 3.3V OUTPUT for testing
-
---- GPIO States ---
-GPIO0: LOW
-GPIO1: LOW
-GPIO2: HIGH
-GPIO3: LOW
-GPIO4: LOW
-GPIO5: LOW
-
---- GPIO States ---
-GPIO0: HIGH
-GPIO1: LOW
-GPIO2: HIGH
-GPIO3: LOW
-GPIO4: LOW
-GPIO5: LOW
-```
-
-## Known Issues
-
-- **GPIO2 always HIGH** - this is normal for ESP32-C3 (strapping/boot pin with internal pull-up)
-- Dupont connections may have poor contact - verify connection quality
-- GPIO8 and GPIO9 have I2C pull-ups on some boards - GPIO8 works for output but not recommended for input
-
-## Hardware Notes
-
-### Tested on ESP32-C3 Super Mini
-
-**Recommended INPUT pins:**
-- ✅ GPIO0, GPIO1, GPIO3, GPIO4, GPIO5 - stable, clean signals
-- ⚠️ GPIO2 - strapping pin, always HIGH due to internal pull-up
-- ❌ GPIO8, GPIO9 - I2C pins with hardware pull-ups, not suitable for clean input
-
-**Connection diagram for testing:**
-```
-ESP32-C3 Super Mini
-┌─────────────────┐
-│                 │
-│  GPIO8 (OUT) ───┼──┐ 3.3V test source
-│                 │  │
-│  GPIO0 (IN)  ───┼──┘ Connect with dupont
-│  GPIO1 (IN)  ───┤
-│  GPIO3 (IN)  ───┤
-│  GPIO4 (IN)  ───┤
-│  GPIO5 (IN)  ───┤
-│                 │
-│  GND ───────────┼──── Common ground
-└─────────────────┘
-```
-
-## UPS Connection (Future)
-
-When connecting real VIA Energy Mini UPS via 5V→3.3V converter board:
-```
-VIA Energy Mini UPS → 5V→3.3V Converter → ESP32-C3
-LED 25%  (5V) ────────→ GPIO0 (3.3V)
-LED 50%  (5V) ────────→ GPIO1 (3.3V)
-LED 75%  (5V) ────────→ GPIO5 (3.3V)
-LED 100% (5V) ────────→ GPIO3 (3.3V)
-PWR Mode (5V) ────────→ GPIO4 (3.3V)
-GND ──────────────────→ GND
-```
-
-**Note:** GPIO2 is skipped due to internal pull-up behavior.
-
-## Troubleshooting
-
-### Unable to Flash
-- Try lower speed: add `upload_speed = 115200` to `platformio.ini`
-- Hold BOOT button while connecting USB
-- Check USB cable (must be data cable, not charge-only)
-- Try a different USB port
-
-### Serial Monitor Shows Garbage
-- Verify baud rate is 115200
-- Reset the board (RST button)
-
-### Unstable GPIO Readings
-- Check dupont wire connections
-- Ensure common ground (GND) connection
-- Try different dupont wires
-
-### GPIO2 Always Shows HIGH
-- This is normal behavior - GPIO2 has internal pull-up resistor
-- Use GPIO5 as alternative input
-
-| Command | Description |
-|---------|-------------|
-| `pio run` | Build project |
-| `pio run -t upload` | Flash firmware |
-| `pio device monitor` | Serial Monitor |
-| `pio run -t upload -t monitor` | Flash + Monitor |
-| `pio run -t clean` | Clean build files |
-| `pio lib install <lib>` | Install library |
