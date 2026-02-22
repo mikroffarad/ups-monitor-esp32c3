@@ -1,14 +1,16 @@
 # UPS Monitor — ESP32-C3 Super Mini
 
-Web-based status monitor for DC UPS.  
-Reads battery level LEDs and AC/charging state via GPIO, and exposes a live dashboard over Wi-Fi.
+Web-based live monitor for DC UPS.  
+ESP32-C3 reads battery LEDs and AC/charging state via GPIO and exposes a real-time dashboard over Wi-Fi.
+
+The device starts in **Access Point mode**, allows Wi-Fi configuration, then switches to Station mode for monitoring and OTA updates.
 
 ---
 
 ## Hardware
 
 **Board:** ESP32-C3 Super Mini  
-**UPS:** VIA Energy Mini
+**UPS:** VIA Energy Mini  
 
 ---
 
@@ -22,30 +24,54 @@ Reads battery level LEDs and AC/charging state via GPIO, and exposes a live dash
 | 3    | 50%       | Battery ≥ 50% LED |
 | 4    | 25%       | Battery ≥ 25% LED |
 
+⚠ ESP32-C3 is **NOT 5V tolerant**.  
+All GPIO inputs must be limited to **3.3V maximum**.
+
+Use:
+- Voltage divider (recommended)
+- Series resistor (temporary testing only)
+- Level shifter or optocoupler (best for permanent installation)
+
 ---
 
 ## Inverted Signal Logic
 
-The UPS LED outputs use **inverted logic**:
+UPS LED outputs use **inverted logic**:
 
 | Physical pin level | Meaning |
 |--------------------|---------|
-| `HIGH` | Indicator is **OFF** (level not reached / no AC) |
-| `LOW`  | Indicator is **ON** (level active / AC present) |
+| `HIGH` | Indicator is OFF |
+| `LOW`  | Indicator is ON |
 
-In the code this is handled by the `inverted` field inside each `PinDef` struct:
+Firmware handles inversion internally:
 
 ```cpp
-const PinDef PINS[] = {
-  { PIN_R,   true, "AC / Charging" },  // true = inverted
-  { PIN_100, true, "100%"          },
-  ...
-};
+bool readLogicalPin(int pin)
+{
+    return !digitalRead(pin); // inverted logic
+}
 ```
 
-The helper `isActive()` transparently flips the reading when `inverted = true`, so the rest of the code always works with logical (not physical) levels. The web UI shows **green = active**, **red = inactive** — already accounting for the inversion.
+The web UI always shows:
 
-To add a non-inverted pin in the future, simply set its `inverted` field to `false`.
+- 🟢 Green = Active
+- 🔴 Red = Inactive
+
+---
+
+## Boot Behavior
+
+On every power-up:
+
+1. ESP32 starts in **Access Point mode**
+2. SSID: `UPS_Config`
+3. Open `http://192.168.4.1`
+4. Enter your Wi-Fi credentials
+5. Device switches to Station mode
+6. Dashboard becomes available via assigned IP
+
+Wi-Fi credentials are **NOT stored**.  
+After reboot → configuration resets → AP mode again.
 
 ---
 
@@ -53,86 +79,139 @@ To add a non-inverted pin in the future, simply set its `inverted` field to `fal
 
 | URL | Description |
 |-----|-------------|
-| `http://<IP>/` | Live dashboard — battery level, AC status, GPIO table |
-| `http://<IP>/update` | OTA firmware update page |
-| `http://<IP>/api/status` | JSON API — battery %, pin states, uptime, version |
+| `http://192.168.4.1/` | Wi-Fi configuration page (AP mode) |
+| `http://<IP>/` | Live UPS dashboard (Station mode) |
+| `http://<IP>/update` | OTA firmware upload |
 
-The dashboard auto-refreshes every **3 seconds** via `fetch`.
-
----
-
-## Configuration
-
-Open `main.cpp` and edit the top section:
-
-```cpp
-const char* SSID             = "YOUR_WIFI_SSID";
-const char* PASSWORD         = "YOUR_WIFI_PASSWORD";
-const char* FIRMWARE_VERSION = "1.1.0";   // bump this on every release
-```
+Dashboard updates in real time using **WebSocket** (no page refresh required).
 
 ---
 
 ## First Flash (USB)
 
-1. Make sure `platformio.ini` does **not** have `upload_protocol` set.
-2. Connect the board via USB.
-3. In PlatformIO: **Build** → **Upload**.
-4. Open Serial Monitor at **115200 baud** — the IP address will be printed on boot.
+1. Connect ESP32-C3 via USB.
+2. Open PlatformIO.
+3. Click **Build**.
+4. Click **Upload**.
+5. Open Serial Monitor (115200 baud).
 
 ---
 
-## OTA Firmware Update (Web)
+## OTA Firmware Update
 
-After the first USB flash, all subsequent updates can be done wirelessly through the browser.
+After the first USB flash, all updates can be done wirelessly.
 
-### Step 1 — Build the binary
+### Step 1 — Build firmware
 
-In PlatformIO press **Build** (or `Ctrl+Alt+B`).  
-The output file will be located at:
-
-```
-.pio/build/esp32-c3-devkitm-1/firmware.bin
-```
-
-### Step 2 — Open the update page
-
-Navigate to `http://<IP>/update` in your browser.  
-The current firmware version is displayed at the top of the page.
-
-### Step 3 — Upload
-
-Drag and drop `firmware.bin` onto the upload area, or click to browse for the file.  
-Press **Flash firmware**.
-
-A progress bar shows the upload percentage.  
-Once complete, the ESP32 reboots automatically and the browser redirects back to the dashboard after 8 seconds.
-
-> **Note:** If the browser shows a connection error instead of the success message, the flash still likely succeeded — the ESP32 reboots mid-transfer which closes the HTTP connection. Wait a few seconds and refresh the main page to verify the new version number.
-
-### Step 4 — Verify
-
-Check the subtitle on the dashboard — it should show the new version:
+In PlatformIO:
 
 ```
-VIA Energy Mini — ESP32-C3 · v1.2.0
+pio run
+```
+
+The binary will be located at:
+
+```
+.pio/build/esp32c3/firmware.bin
 ```
 
 ---
 
-## API Response Example
+### Step 2 — Open OTA page
+
+Navigate to:
+
+```
+http://<IP>/update
+```
+
+---
+
+### Step 3 — Upload firmware
+
+1. Select `firmware.bin`
+2. Press **Upload**
+3. Wait for completion
+4. ESP32 reboots automatically
+
+If the browser shows a connection error after upload, this is normal — the device reboots during HTTP transfer.
+
+Wait a few seconds and refresh the main page.
+
+---
+
+## WebSocket Live Updates
+
+The dashboard connects to:
+
+```
+ws://<IP>/ws
+```
+
+On every state change, ESP32 sends JSON like:
 
 ```json
 {
-  "version": "1.1.0",
-  "battery_pct": 75,
-  "uptime_s": 3842,
-  "pins": [
-    { "pin": 21, "label": "AC / Charging", "raw": 0, "inverted": true, "active": true  },
-    { "pin": 0,  "label": "100%",          "raw": 1, "inverted": true, "active": false },
-    { "pin": 1,  "label": "75%",           "raw": 0, "inverted": true, "active": true  },
-    { "pin": 3,  "label": "50%",           "raw": 0, "inverted": true, "active": true  },
-    { "pin": 4,  "label": "25%",           "raw": 0, "inverted": true, "active": true  }
-  ]
+  "R": true,
+  "100": false,
+  "75": true,
+  "50": true,
+  "25": true
 }
 ```
+
+The page updates instantly without refresh.
+
+---
+
+## PlatformIO Configuration
+
+Example `platformio.ini`:
+
+```ini
+[env:esp32c3]
+platform = espressif32
+board = esp32-c3-devkitm-1
+framework = arduino
+monitor_speed = 115200
+
+lib_deps =
+    https://github.com/mathieucarbou/AsyncTCP.git
+    https://github.com/mathieucarbou/ESPAsyncWebServer.git
+    bblanchon/ArduinoJson
+```
+
+---
+
+## Safety Notes
+
+- Never apply 5V directly to ESP32-C3 GPIO.
+- Avoid using GPIO0 if external signals may hold it LOW during reset (boot mode issue).
+- Prefer opto-isolation when interfacing with UPS internal circuitry.
+
+---
+
+## Future Improvements
+
+- Battery percentage auto-calculation
+- mDNS support (`http://ups.local`)
+- Password-protected OTA
+- NVS storage for Wi-Fi
+- Signal debounce filtering
+- Voltage measurement via ADC
+- Historical logging
+
+---
+
+## Project Purpose
+
+This firmware turns a basic DC UPS into a network-monitored device with:
+
+- Live status view
+- OTA firmware upgrades
+- Temporary Wi-Fi configuration mode
+- Clean GPIO abstraction for inverted signals
+
+---
+
+**VIA Energy Mini — ESP32-C3 UPS Monitor**
