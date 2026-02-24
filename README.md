@@ -68,7 +68,7 @@ On every power-up:
 3. Open `http://192.168.4.1`
 4. Enter your Wi-Fi credentials
 5. Device switches to Station mode
-6. Dashboard becomes available via assigned IP
+6. Dashboard becomes available at `http://ups-monitor.local` (or via assigned IP)
 
 Wi-Fi credentials are **NOT stored**.  
 After reboot → configuration resets → AP mode again.
@@ -80,8 +80,9 @@ After reboot → configuration resets → AP mode again.
 | URL | Description |
 |-----|-------------|
 | `http://192.168.4.1/` | Wi-Fi configuration page (AP mode) |
-| `http://<IP>/` | Live UPS dashboard (Station mode) |
-| `http://<IP>/update` | OTA firmware upload |
+| `http://ups-monitor.local/` | Live UPS dashboard (Station mode) |
+| `http://ups-monitor.local/update` | OTA firmware upload |
+| `http://<IP>/` | Same as above, via direct IP |
 
 Dashboard updates in real time using **WebSocket** (no page refresh required).
 
@@ -122,7 +123,7 @@ The binary will be located at:
 Navigate to:
 
 ```
-http://<IP>/update
+http://ups-monitor.local/update
 ```
 
 ---
@@ -140,12 +141,38 @@ Wait a few seconds and refresh the main page.
 
 ---
 
+## mDNS — Local DNS
+
+After connecting to Wi-Fi, the device registers itself via **mDNS (Multicast DNS)**:
+
+```
+http://ups-monitor.local
+```
+
+No need to know the device's IP address.
+
+| Platform | Requirements |
+|----------|-------------|
+| macOS / iOS | Built-in (Bonjour) |
+| Linux | `avahi-daemon` |
+| Windows | [Apple Bonjour](https://support.apple.com/kb/DL999) or iTunes |
+
+The hostname is defined in firmware:
+
+```cpp
+#define MDNS_HOSTNAME "ups-monitor"
+```
+
+Change it before building to avoid conflicts in networks with multiple devices.
+
+---
+
 ## WebSocket Live Updates
 
 The dashboard connects to:
 
 ```
-ws://<IP>/ws
+ws://ups-monitor.local/ws
 ```
 
 On every state change, ESP32 sends JSON like:
@@ -194,7 +221,6 @@ lib_deps =
 ## Future Improvements
 
 - Battery percentage auto-calculation
-- mDNS support (`http://ups.local`)
 - Password-protected OTA
 - NVS storage for Wi-Fi
 - Signal debounce filtering

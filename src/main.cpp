@@ -1,9 +1,12 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include <Update.h>
+
+#define MDNS_HOSTNAME "ups-monitor"
 
 #define PIN_R    21
 #define PIN_100  0
@@ -142,7 +145,11 @@ void setup()
         WiFi.mode(WIFI_STA);
         WiFi.begin(ssid.c_str(), pass.c_str());
 
-        request->send(200, "text/plain", "Connecting...");
+        request->send(200, "text/html",
+            "<p>Connecting...</p>"
+            "<p>After connection open: "
+            "<a href='http://" MDNS_HOSTNAME ".local'>"
+            "http://" MDNS_HOSTNAME ".local</a></p>");
 
         int timeout = 0;
         while (WiFi.status() != WL_CONNECTED && timeout < 20)
@@ -152,7 +159,13 @@ void setup()
         }
 
         if (WiFi.status() == WL_CONNECTED)
+        {
             wifiConnected = true;
+            MDNS.begin(MDNS_HOSTNAME);
+            MDNS.addService("http", "tcp", 80);
+            Serial.printf("mDNS: http://%s.local\n", MDNS_HOSTNAME);
+            Serial.printf("IP:   http://%s\n", WiFi.localIP().toString().c_str());
+        }
     });
 
     /* ===== WebSocket ===== */
